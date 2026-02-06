@@ -7,126 +7,115 @@ app.use(cors());
 app.use(express.json());
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
 const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
 
+const PASSWORD = "dinh113";
 
-// send message to Discord safely
-async function logToDiscord(text)
+const sessions = new Set();
+
+function generateToken()
+{
+    return Math.random().toString(36).substring(2)
+         + Math.random().toString(36).substring(2);
+}
+
+async function log(text)
 {
     try
     {
         await fetch(DISCORD_WEBHOOK,
         {
-            method: "POST",
-
-            headers:
-            {
-                "Content-Type": "application/json"
-            },
-
-            body: JSON.stringify({
-                content: text
-            })
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({content:text})
         });
     }
     catch {}
 }
 
 
-
-app.post("/chat", async (req, res) =>
+// LOGIN
+app.post("/auth",(req,res)=>
 {
-    const username = req.body.username || "Unknown";
-    const message = req.body.message || "";
+    const username = req.body.username;
+    const password = req.body.password;
 
-    await logToDiscord(
-        `💻 Terminal message\nUser: ${username}\nMessage: ${message}`
-    );
-
-    try
+    if(password === PASSWORD)
     {
-        const response = await fetch(
-            "https://api.openai.com/v1/chat/completions",
+        const token = generateToken();
+
+        sessions.add(token);
+
+        log(`🔐 LOGIN: ${username}`);
+
+        res.json({
+            success:true,
+            token:token
+        });
+    }
+    else
+    {
+        res.json({success:false});
+    }
+});
+
+
+// VERIFY
+app.post("/verify",(req,res)=>
+{
+    const token = req.body.token;
+
+    res.json({
+        valid:sessions.has(token)
+    });
+});
+
+
+// CHAT
+app.post("/chat", async (req,res)=>
+{
+    const token = req.body.token;
+
+    if(!sessions.has(token))
+    {
+        res.json({reply:"Unauthorized"});
+        return;
+    }
+
+    const username = req.body.username;
+    const message = req.body.message;
+
+    log(`💻 ${username}: ${message}`);
+
+    const response = await fetch(
+        "https://api.openai.com/v1/chat/completions",
+        {
+            method:"POST",
+            headers:
             {
-                method: "POST",
-
-                headers:
-                {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${OPENAI_API_KEY}`
-                },
-
-                body: JSON.stringify({
-                    model: "gpt-4o-mini",
-
-                    messages:
-                    [
-                        {
-                            role: "system",
-                            content:
-                            "You are an AI inside a terminal called Coding Hub. Respond clearly."
-                        },
-                        {
-                            role: "user",
-                            content: message
-                        }
-                    ]
-                })
-            }
-        );
-
-        const data = await response.json();
-
-        const reply =
-        data.choices?.[0]?.message?.content ||
-        "AI error.";
-
-        await logToDiscord(
-            `🤖 AI reply\nUser: ${username}\nReply: ${reply}`
-        );
-
-        res.json({
-            reply: reply
-        });
-    }
-    catch
-    {
-        await logToDiscord("❌ AI backend error");
-
-        res.json({
-            reply: "Backend error."
-        });
-    }
-});
-
-
-
-app.post("/login", async (req, res) =>
-{
-    const username = req.body.username || "Unknown";
-
-    await logToDiscord(
-        `🔐 LOGIN\nUser: ${username}`
+                "Content-Type":"application/json",
+                "Authorization":`Bearer ${OPENAI_API_KEY}`
+            },
+            body:JSON.stringify({
+                model:"gpt-4o-mini",
+                messages:[
+                    {role:"user",content:message}
+                ]
+            })
+        }
     );
 
-    res.json({ ok: true });
+    const data = await response.json();
+
+    const reply =
+    data.choices?.[0]?.message?.content || "Error";
+
+    log(`🤖 AI: ${reply}`);
+
+    res.json({reply});
 });
 
 
-app.post("/exit", async (req, res) =>
-{
-    const username = req.body.username || "Unknown";
-
-    await logToDiscord(
-        `🚪 EXIT TERMINAL\nUser: ${username}`
-    );
-
-    res.json({ ok: true });
-});
-
-
-app.listen(3000, () =>
-{
-    console.log("Backend running");
+app.listen(3000,()=>{
+    console.log("Secure backend running");
 });
